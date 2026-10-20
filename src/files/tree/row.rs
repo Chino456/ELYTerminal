@@ -124,7 +124,11 @@ pub(super) fn draw_row(rows: &Rows, ix: usize, _: &mut Window, cx: &mut App) -> 
         Shown::Node { note, tone, .. } => (note.clone(), tone.map(|tone| tone_color(tone, colors))),
         Shown::Loading => (None, None),
     };
-    let (toggle, activate) = (rows.toggle.clone(), rows.activate.clone());
+    let (toggle, toggle_click, activate) = (
+        rows.toggle.clone(),
+        rows.toggle.clone(),
+        rows.activate.clone(),
+    );
     let (owner, nodes, nav_entity, on_move) = (
         rows.owner,
         rows.nodes.clone(),
@@ -199,7 +203,9 @@ pub(super) fn draw_row(rows: &Rows, ix: usize, _: &mut Window, cx: &mut App) -> 
         }))
         .children(landing.filter(|at| *at != DropAt::Inside).map(line))
         .on_click(move |event, window, cx| {
-            if event.click_count() == 2 || !opens {
+            if opens {
+                toggle_click(&act_key, !open, cx);
+            } else if event.click_count() == 2 {
                 activate(&act_key, window, cx);
             }
         })

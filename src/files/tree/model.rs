@@ -147,6 +147,7 @@ pub enum Shown {
 pub struct Row {
     pub shown: Shown,
     pub depth: usize,
+    pub parent: Option<usize>,
 }
 
 impl Row {
@@ -159,8 +160,15 @@ impl Row {
 }
 
 pub fn rows(nodes: &[TreeNode], open: &HashSet<SharedString>) -> Vec<Row> {
-    fn walk(nodes: &[TreeNode], open: &HashSet<SharedString>, depth: usize, out: &mut Vec<Row>) {
+    fn walk(
+        nodes: &[TreeNode],
+        open: &HashSet<SharedString>,
+        depth: usize,
+        parent: Option<usize>,
+        out: &mut Vec<Row>,
+    ) {
         for node in nodes {
+            let here = out.len();
             let is_open = node.opens() && open.contains(&node.key);
             out.push(Row {
                 shown: Shown::Node {
@@ -174,13 +182,17 @@ pub fn rows(nodes: &[TreeNode], open: &HashSet<SharedString>) -> Vec<Row> {
                     open: is_open,
                 },
                 depth,
+                parent,
             });
             match (&node.children, is_open) {
-                (Children::Known(children), true) => walk(children, open, depth + 1, out),
+                (Children::Known(children), true) => {
+                    walk(children, open, depth + 1, Some(here), out)
+                }
                 (Children::Pending, true) => {
                     out.push(Row {
                         shown: Shown::Loading,
                         depth: depth + 1,
+                        parent: Some(here),
                     });
                 }
                 _ => {}
@@ -188,6 +200,6 @@ pub fn rows(nodes: &[TreeNode], open: &HashSet<SharedString>) -> Vec<Row> {
         }
     }
     let mut out = Vec::new();
-    walk(nodes, open, 0, &mut out);
+    walk(nodes, open, 0, None, &mut out);
     out
 }

@@ -44,6 +44,7 @@ fn use_seeded<T: Clone + PartialEq + 'static>(
 struct Nav {
     scroll: UniformListScrollHandle,
     drop: Option<(SharedString, DropAt)>,
+    asked: HashSet<SharedString>,
 }
 
 /// Nodes that open and close in a virtual list.
@@ -122,10 +123,17 @@ impl RenderOnce for Tree {
             .iter()
             .filter(|row| matches!(row.shown, model::Shown::Loading))
         {
-            if let Some(key) = row.key().cloned()
-                && let Some(on_load) = self.on_load.clone()
+            if let Some(parent) = row.parent
+                && let Some(key) = shown[parent].key().cloned()
             {
-                window.defer(cx, move |window, cx| on_load(&key, window, cx));
+                if nav.read(cx).asked.contains(&key) {
+                    continue;
+                }
+                nav.update(cx, |nav, _| nav.asked.insert(key.clone()));
+                if let Some(on_load) = self.on_load.clone() {
+                    log::info!("tree {id:?}: asking for {key}'s children");
+                    window.defer(cx, move |window, cx| on_load(&key, window, cx));
+                }
             }
         }
         let count = shown.len();
