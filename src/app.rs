@@ -218,20 +218,10 @@ fn keep_size(window: &mut Window, cx: &mut Context<Workspace>) {
     .detach();
 }
 
-/// Finds the folder for the first session from command-line arguments, CWD or home.
+/// Finds the folder for the first session from command-line arguments or home.
 pub fn start_folder(args: impl IntoIterator<Item = OsString>) -> anyhow::Result<PathBuf> {
     if let Some(target) = folder_from_args(args)? {
         return Ok(target);
-    }
-    #[cfg(not(windows))]
-    if let Ok(cwd) = std::env::current_dir() {
-        #[cfg(unix)]
-        let is_root = cwd == std::path::Path::new("/");
-        #[cfg(not(unix))]
-        let is_root = false;
-        if !is_root && cwd.is_dir() {
-            return Ok(cwd);
-        }
     }
     dirs::home_dir().ok_or_else(|| anyhow::anyhow!("app: no home folder"))
 }
@@ -377,5 +367,11 @@ mod tests {
     fn folder_empty_args_returns_none() {
         let res = folder_from_args([OsString::from("elyterminal")]).unwrap();
         assert_eq!(res, None);
+    }
+
+    #[test]
+    fn start_folder_defaults_to_home() {
+        let res = start_folder([OsString::from("elyterminal")]).unwrap();
+        assert_eq!(res, dirs::home_dir().unwrap());
     }
 }
