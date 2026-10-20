@@ -6,12 +6,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ely_gpui_component::{
-    data_display::Tone,
-    lists::{DropAt, GitStatus, Tree, TreeNode},
-    primitives::IconName,
-};
+use ely_gpui_component::{data_display::Tone, lists::GitStatus, primitives::IconName};
 use gpui::{AppContext, Context, IntoElement, Render, SharedString, Styled, Task, Window};
+
+pub mod tree;
+pub use tree::TreeDrag;
+use tree::{DropAt, Tree, TreeNode};
 
 use crate::{git, sessions};
 
@@ -236,7 +236,7 @@ impl Files {
         let own = |path: &Path| self.marks.get(mark_key(path).as_ref()).copied();
         let mark = own(path).or(untracked.then_some(GitStatus::Untracked));
         let inside = mark == Some(GitStatus::Untracked);
-        let node = TreeNode::new(key(path), label).icon(IconName::Folder);
+        let node = TreeNode::new(key(path), path.to_path_buf(), label).icon(IconName::Folder);
         let node = match self.listings.get(path) {
             None => node.pending(),
             Some(Err(_)) => return node.children([]).note("unreadable").tone(Tone::Danger),
@@ -246,7 +246,7 @@ impl Files {
                 if entry.folder {
                     return self.folder(&path, label, inside);
                 }
-                let file = TreeNode::new(key(&path), label).icon(IconName::File);
+                let file = TreeNode::new(key(&path), path.clone(), label).icon(IconName::File);
                 badge(
                     file,
                     own(&path).or(inside.then_some(GitStatus::Untracked)),

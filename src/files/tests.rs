@@ -109,7 +109,7 @@ fn the_tree_wears_marks_and_an_untracked_folder_marks_what_it_holds() {
             .expect("a name")
             .to_string_lossy()
             .to_string();
-        TreeNode::new(key(path), label).icon(icon)
+        TreeNode::new(key(path), path.to_path_buf(), label).icon(icon)
     };
     let untracked = |node: TreeNode| node.note("U").tone(Tone::Success);
     let dotted = |node: TreeNode| node.note("•").tone(Tone::Warning);
@@ -150,13 +150,13 @@ fn names_with_newlines_label_on_one_line_and_keep_their_paths() {
         },
     ];
     files.listings.insert(root.clone(), Ok(entries));
-    let expected = TreeNode::new(key(&root), "r")
+    let expected = TreeNode::new(key(&root), root.clone(), "r")
         .icon(IconName::Folder)
         .children([
-            TreeNode::new(key(&folder), "line␊break")
+            TreeNode::new(key(&folder), folder.clone(), "line␊break")
                 .icon(IconName::Folder)
                 .pending(),
-            TreeNode::new(key(&file), "report␊2026.txt").icon(IconName::File),
+            TreeNode::new(key(&file), file.clone(), "report␊2026.txt").icon(IconName::File),
         ]);
     assert_eq!(files.folder(&root, "r".into(), false), expected);
 }
@@ -176,11 +176,11 @@ fn names_that_show_alike_keep_their_own_keys_and_paths() {
     let entries = vec![entry(OsStr::new("bad\u{FFFD}.txt")), entry(raw)];
     files.listings.insert(root.clone(), Ok(entries));
     assert_ne!(key(&text), key(&bytes), "two paths, two keys");
-    let expected = TreeNode::new(key(&root), "r")
+    let expected = TreeNode::new(key(&root), root.clone(), "r")
         .icon(IconName::Folder)
         .children([
-            TreeNode::new(key(&text), "bad\u{FFFD}.txt").icon(IconName::File),
-            TreeNode::new(key(&bytes), "bad\u{FFFD}.txt").icon(IconName::File),
+            TreeNode::new(key(&text), text.clone(), "bad\u{FFFD}.txt").icon(IconName::File),
+            TreeNode::new(key(&bytes), bytes.clone(), "bad\u{FFFD}.txt").icon(IconName::File),
         ]);
     assert_eq!(files.folder(&root, "r".into(), false), expected);
     for path in [&root, &text, &bytes] {
@@ -230,10 +230,11 @@ fn decomposed_names_on_disk_wear_the_composed_marks_git_writes() {
     files.listings.insert(root.clone(), list(&root));
     let changes = git::changes(&root).expect("status").expect("a work tree");
     (files.marks, files.dirty) = marks(&root, changes);
-    let node = |name: &str, icon| TreeNode::new(key(&root.join(name)), name).icon(icon);
+    let node =
+        |name: &str, icon| TreeNode::new(key(&root.join(name)), root.join(name), name).icon(icon);
     let dotted = |node: TreeNode| node.note("•").tone(Tone::Warning);
     let expected = dotted(
-        TreeNode::new(key(&root), "r")
+        TreeNode::new(key(&root), root.clone(), "r")
             .icon(IconName::Folder)
             .children([
                 node(".git", IconName::Folder).pending(),
@@ -273,4 +274,17 @@ fn a_dragged_file_targets_the_folder_dropped_into_or_the_sibling_parent() {
 
     // Moving a file to where it already sits is refused.
     assert_eq!(move_destination(&file, &root, DropAt::Inside), None);
+}
+
+#[test]
+fn tree_drag_holds_path_key_and_label() {
+    let path = PathBuf::from("/home/user/test.txt");
+    let drag = TreeDrag {
+        owner: gpui::EntityId::from(1),
+        path: path.clone(),
+        key: "test.txt".into(),
+        label: "test.txt".into(),
+    };
+    assert_eq!(drag.path, path);
+    assert_eq!(drag.label, "test.txt");
 }

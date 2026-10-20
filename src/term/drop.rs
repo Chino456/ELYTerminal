@@ -88,6 +88,25 @@ impl TerminalView {
             ),
         }
     }
+
+    /// Types a path dropped from the file tree at the cursor as a paste.
+    pub(super) fn drop_tree_drag(&mut self, drag: &crate::files::TreeDrag, cx: &mut Context<Self>) {
+        let (paths, quote) = ([drag.path.clone()], self.pty.quote);
+        match typed(&paths, quote) {
+            Ok(text) => {
+                log::info!(
+                    "terminal {}: tree item dropped ({}), quoted for {quote:?}",
+                    self.pty.pid,
+                    drag.path.display()
+                );
+                self.paste_text(&text, cx);
+            }
+            Err(error) => log::error!(
+                "terminal {}: the drop types nothing: {error:#}",
+                self.pty.pid
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
