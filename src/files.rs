@@ -8,7 +8,7 @@ use std::{
 
 use ely_gpui_component::{
     data_display::Tone,
-    lists::{GitStatus, Tree, TreeNode},
+    lists::{DropAt, GitStatus, Tree, TreeNode},
     primitives::IconName,
 };
 use gpui::{AppContext, Context, IntoElement, Render, SharedString, Styled, Task, Window};
@@ -258,6 +258,70 @@ impl Files {
     }
 }
 
+/// Destination path for a dragged file or folder `from` dropped at `to`.
+fn move_destination(from: &Path, to: &Path, at: DropAt) -> Option<PathBuf> {
+    let name = from.file_name()?;
+    let target_dir = match at {
+        DropAt::Inside => to,
+        DropAt::Before | DropAt::After => to.parent()?,
+    };
+    if target_dir.starts_with(from) {
+        log::warn!("files: cannot move folder into itself");
+        return None;
+    }
+    let dest = target_dir.join(name);
+    if dest == from || dest.exists() {
+        return None;
+    }
+    Some(dest)
+}
+
+impl Files {
+    /// Moves a dragged file or folder `from` to `to`, before, inside or after it.
+    fn move_entry(&mut self, from: &str, to: &str, at: DropAt, cx: &mut Context<Self>) {
+        let (Some(from_path), Some(to_path)) = (self.path(from), self.path(to)) else {
+            log::warn!("files: dragged or target path is gone");
+            return;
+        };
+        let Some(dest) = move_destination(&from_path, &to_path, at) else {
+            return;
+        };
+        let target_dir = match at {
+            DropAt::Inside => to_path,
+            DropAt::Before | DropAt::After => match to_path.parent() {
+                Some(parent) => parent.to_path_buf(),
+                None => return,
+            },
+        };
+        if let Err(error) = fs::rename(&from_path, &dest) {
+            log::error!("files: move failed: {error}");
+            return;
+        }
+        log::info!("files: moved {} to {}", from_path.display(), dest.display());
+        let remapped: Vec<_> = self
+            .wanted
+            .iter()
+            .filter_map(|p| {
+                p.strip_prefix(&from_path)
+                    .ok()
+                    .map(|rest| (p.clone(), dest.join(rest)))
+            })
+            .collect();
+        for (old, new) in remapped {
+            self.wanted.remove(&old);
+            self.wanted.insert(new);
+        }
+        self.wanted.insert(target_dir);
+        self.read(cx);
+        let root = self.root.clone();
+        let changes = cx.background_spawn(async move { git::changes(&root) });
+        self.checking = cx.spawn(async move |files, cx| {
+            let changes = changes.await;
+            files.update(cx, |files, cx| files.mark(changes, cx)).ok();
+        });
+    }
+}
+
 impl Render for Files {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let home = dirs::home_dir();
@@ -267,7 +331,7 @@ impl Render for Files {
             }
             _ => sessions::shown(&self.root, home.as_deref()),
         };
-        let (load, open) = (cx.entity(), cx.entity());
+        let (load, open, moved) = (cx.entity(), cx.entity(), cx.entity());
         Tree::new(
             ("files", self.generation),
             [self.folder(&self.root, label, false)],
@@ -285,6 +349,9 @@ impl Render for Files {
                 cx.open_with_system(&path)
             }
             None => log::warn!("files: {key} to open is gone"),
+        })
+        .on_move(move |from, to, at, _, cx| {
+            moved.update(cx, |files, cx| files.move_entry(from, to, at, cx));
         })
         .size_full()
     }

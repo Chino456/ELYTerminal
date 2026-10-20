@@ -452,18 +452,24 @@ impl Render for Workspace {
             shell = shell.column(terminal.action(end));
         }
         // The context sits above the focus root, so its keys work wherever focus is.
+        let content = FocusScope::new(&self.focus).root().size_full().child(shell);
+        let tiled = window.is_fullscreen() || window.is_maximized();
+        let pane = match tiled {
+            true => content.into_any_element(),
+            false => ResizeBorder::new()
+                .when(self.background.see_through(), ResizeBorder::glass)
+                .child(content)
+                .into_any_element(),
+        };
         div()
             .size_full()
             .key_context(CONTEXT)
             .map(menus::window_actions)
             .on_action(cx.listener(|this, _: &ToggleSessions, _, cx| {
-                this.toggle(
-                    |settings| settings.show_sessions = !settings.show_sessions,
-                    cx,
-                )
+                this.toggle(|s| s.show_sessions = !s.show_sessions, cx);
             }))
             .on_action(cx.listener(|this, _: &TogglePanel, _, cx| {
-                this.toggle(|settings| settings.show_panel = !settings.show_panel, cx)
+                this.toggle(|s| s.show_panel = !s.show_panel, cx);
             }))
             .on_action(cx.listener(|this, _: &NewSession, window, cx| this.new_session(window, cx)))
             .on_action(
@@ -476,7 +482,7 @@ impl Render for Workspace {
                 cx.listener(|this, _: &PreviousSession, window, cx| this.step(false, window, cx)),
             )
             .on_action(cx.listener(|this, _: &LastSession, window, cx| {
-                this.select(this.sessions.len().saturating_sub(1), window, cx)
+                this.select(this.sessions.len().saturating_sub(1), window, cx);
             }))
             .on_action(cx.listener(|this, select: &SelectSession, window, cx| {
                 if select.0 < this.sessions.len() {
@@ -485,10 +491,6 @@ impl Render for Workspace {
                     cx.propagate();
                 }
             }))
-            .child(
-                ResizeBorder::new()
-                    .when(self.background.see_through(), ResizeBorder::glass)
-                    .child(FocusScope::new(&self.focus).root().size_full().child(shell)),
-            )
+            .child(pane)
     }
 }

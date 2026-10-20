@@ -246,3 +246,31 @@ fn decomposed_names_on_disk_wear_the_composed_marks_git_writes() {
     );
     assert_eq!(files.folder(&root, "r".into(), false), expected);
 }
+
+#[test]
+fn a_dragged_file_targets_the_folder_dropped_into_or_the_sibling_parent() {
+    let root = folder("files-move");
+    let docs = root.join("docs");
+    let src = root.join("src");
+    fs::create_dir(&docs).expect("docs");
+    fs::create_dir(&src).expect("src");
+    let file = root.join("notes.txt");
+    fs::write(&file, "hello").expect("file");
+
+    // Dropping inside docs moves notes.txt into docs.
+    let dest = move_destination(&file, &docs, DropAt::Inside);
+    assert_eq!(dest, Some(docs.join("notes.txt")));
+
+    // Dropping next to a file inside docs moves notes.txt into docs.
+    let guide = docs.join("guide.md");
+    let dest_sibling = move_destination(&file, &guide, DropAt::Before);
+    assert_eq!(dest_sibling, Some(docs.join("notes.txt")));
+
+    // Moving a folder into itself or a subfolder is refused.
+    let sub = docs.join("sub");
+    assert_eq!(move_destination(&docs, &docs, DropAt::Inside), None);
+    assert_eq!(move_destination(&docs, &sub, DropAt::Inside), None);
+
+    // Moving a file to where it already sits is refused.
+    assert_eq!(move_destination(&file, &root, DropAt::Inside), None);
+}
