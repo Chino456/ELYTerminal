@@ -70,14 +70,14 @@ pub fn typed(paths: &[PathBuf], quote: Quote) -> anyhow::Result<String> {
 }
 
 impl TerminalView {
-    /// Types the dropped paths at the cursor as a paste; a path it cannot type stops the drop.
-    pub(super) fn drop_paths(
+    /// Pastes `paths` at the cursor, quoted for the session's shell, and focuses the window.
+    pub(crate) fn paste_paths(
         &mut self,
-        dropped: &ExternalPaths,
+        paths: &[PathBuf],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (paths, quote) = (dropped.paths(), self.pty.quote);
+        let quote = self.pty.quote;
         match typed(paths, quote) {
             Ok(text) => {
                 log::info!(
@@ -95,6 +95,16 @@ impl TerminalView {
         }
     }
 
+    /// Types the dropped paths at the cursor as a paste; a path it cannot type stops the drop.
+    pub(super) fn drop_paths(
+        &mut self,
+        dropped: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.paste_paths(dropped.paths(), window, cx);
+    }
+
     /// Types a path dropped from the file tree at the cursor as a paste.
     pub(super) fn drop_tree_drag(
         &mut self,
@@ -102,22 +112,7 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (paths, quote) = ([drag.path.clone()], self.pty.quote);
-        match typed(&paths, quote) {
-            Ok(text) => {
-                log::info!(
-                    "terminal {}: tree item dropped ({}), quoted for {quote:?}",
-                    self.pty.pid,
-                    drag.path.display()
-                );
-                self.paste_text(&text, cx);
-                window.focus(&self.focus, cx);
-            }
-            Err(error) => log::error!(
-                "terminal {}: the drop types nothing: {error:#}",
-                self.pty.pid
-            ),
-        }
+        self.paste_paths(std::slice::from_ref(&drag.path), window, cx);
     }
 }
 

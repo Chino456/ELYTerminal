@@ -31,6 +31,8 @@ use crate::{
 mod events;
 mod rename;
 mod widths;
+#[cfg(windows)]
+mod windows;
 
 use widths::{Dragged, Side};
 
@@ -136,6 +138,8 @@ impl Workspace {
         };
         workspace.add(pty, events, launch, window, cx);
         workspace.select(0, window, cx);
+        #[cfg(windows)]
+        windows::listen(window, cx).unwrap_or_else(|error| log::error!("{error:#}"));
         workspace
     }
 

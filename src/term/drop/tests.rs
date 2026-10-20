@@ -37,6 +37,10 @@ fn a_powershell_path_is_single_quoted_with_its_quotes_doubled() {
         "a curly quote"
     );
     assert_eq!(typed(&["/a b", "/c"]), "'/a b' '/c' ");
+    assert_eq!(
+        typed(&["C:\\Folder\\Sub Folder\\"]),
+        "'C:\\Folder\\Sub Folder\\' "
+    );
 }
 
 #[test]
@@ -51,6 +55,11 @@ fn a_cmd_path_is_double_quoted_its_trailing_backslashes_doubled_and_one_cmd_expa
         typed(&["C:\\", "D:\\clip.mp4"]),
         "\"C:\\\\\" \"D:\\clip.mp4\" ",
         "a root's backslash"
+    );
+    assert_eq!(
+        typed(&["C:\\Folder\\Sub Folder\\"]),
+        "\"C:\\Folder\\Sub Folder\\\\\" ",
+        "a folder's trailing backslash"
     );
     for name in ["C:\\%PATH%.txt", "C:\\!DROP!.txt"] {
         let refused = super::typed(&[PathBuf::from(name)], Quote::Cmd);
