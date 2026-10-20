@@ -22,10 +22,10 @@ fn application() -> gpui::Application {
 
 fn run(cx: &mut App) -> anyhow::Result<()> {
     app::start(cx)?;
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("app: no home folder"))?;
+    let folder = app::start_folder(std::env::args_os())?;
     let launch = launch(
         &SettingsStore::get(cx).shell,
-        home,
+        folder,
         &cx.global::<ShellIntegration>().0,
     )?;
     app::open(launch, cx)?;

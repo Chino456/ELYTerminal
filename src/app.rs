@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cell::RefCell, rc::Rc, time::Duration};
+use std::{borrow::Cow, cell::RefCell, ffi::OsString, path::PathBuf, rc::Rc, time::Duration};
 
 use anyhow::Context as _;
 use ely_gpui_component::theme::ActiveTheme;
@@ -216,4 +216,166 @@ fn keep_size(window: &mut Window, cx: &mut Context<Workspace>) {
         }
     })
     .detach();
+}
+
+/// Finds the folder for the first session from command-line arguments, CWD or home.
+pub fn start_folder(args: impl IntoIterator<Item = OsString>) -> anyhow::Result<PathBuf> {
+    if let Some(target) = folder_from_args(args)? {
+        return Ok(target);
+    }
+    #[cfg(not(windows))]
+    if let Ok(cwd) = std::env::current_dir() {
+        #[cfg(unix)]
+        let is_root = cwd == std::path::Path::new("/");
+        #[cfg(not(unix))]
+        let is_root = false;
+        if !is_root && cwd.is_dir() {
+            return Ok(cwd);
+        }
+    }
+    dirs::home_dir().ok_or_else(|| anyhow::anyhow!("app: no home folder"))
+}
+
+/// Reads any folder argument, failing if an explicit path does not exist.
+pub fn folder_from_args(
+    args: impl IntoIterator<Item = OsString>,
+) -> anyhow::Result<Option<PathBuf>> {
+    let mut iter = args.into_iter();
+    iter.next();
+    let mut raw_path = None;
+    while let Some(arg) = iter.next() {
+        let string = arg.to_string_lossy();
+        if string == "--working-directory" || string == "-d" {
+            let next = iter
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("app: {string} needs a folder path"))?;
+            raw_path = Some(next.to_string_lossy().into_owned());
+            break;
+        }
+        if let Some(rest) = string.strip_prefix("--working-directory=") {
+            raw_path = Some(rest.to_string());
+            break;
+        }
+        if let Some(rest) = string.strip_prefix("-d=") {
+            raw_path = Some(rest.to_string());
+            break;
+        }
+        if !string.starts_with('-') && raw_path.is_none() {
+            raw_path = Some(string.into_owned());
+            break;
+        }
+    }
+    match raw_path {
+        Some(raw) => resolve_path(&raw).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Parses a path string or file:// URI into an existing folder.
+fn resolve_path(raw: &str) -> anyhow::Result<PathBuf> {
+    let unescaped = decode_percent(
+        raw.strip_prefix("file://localhost")
+            .or_else(|| raw.strip_prefix("file://"))
+            .unwrap_or(raw),
+    );
+    #[cfg(windows)]
+    let unescaped = match unescaped.strip_prefix('/') {
+        Some(rest) if rest.chars().nth(1) == Some(':') => rest.to_string(),
+        _ => unescaped,
+    };
+    let path = PathBuf::from(unescaped);
+    if !path.exists() {
+        anyhow::bail!("app: folder {} does not exist", path.display());
+    }
+    if path.is_file() {
+        Ok(path.parent().unwrap_or(&path).to_path_buf())
+    } else {
+        Ok(path)
+    }
+}
+
+/// Decodes %XX escapes in URI paths.
+fn decode_percent(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(b) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..=i + 2]).unwrap_or(""), 16)
+        {
+            out.push(b);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn folder_from_flag_and_positional() {
+        let temp = std::env::temp_dir();
+        let path_str = temp.display().to_string();
+        let from_flag = folder_from_args([
+            OsString::from("elyterminal"),
+            OsString::from("-d"),
+            OsString::from(&path_str),
+        ])
+        .unwrap();
+        assert_eq!(from_flag, Some(temp.clone()));
+        let from_long_flag = folder_from_args([
+            OsString::from("elyterminal"),
+            OsString::from(format!("--working-directory={path_str}")),
+        ])
+        .unwrap();
+        assert_eq!(from_long_flag, Some(temp.clone()));
+        let from_pos =
+            folder_from_args([OsString::from("elyterminal"), OsString::from(&path_str)]).unwrap();
+        assert_eq!(from_pos, Some(temp));
+    }
+
+    #[test]
+    fn folder_from_file_returns_parent() {
+        let temp_file = std::env::temp_dir().join("elyterminal_test_file.txt");
+        fs::write(&temp_file, "test").unwrap();
+        let res = folder_from_args([
+            OsString::from("elyterminal"),
+            OsString::from(temp_file.display().to_string()),
+        ])
+        .unwrap();
+        let _ = fs::remove_file(&temp_file);
+        assert_eq!(res, Some(std::env::temp_dir()));
+    }
+
+    #[test]
+    fn folder_from_uri() {
+        let temp = std::env::temp_dir();
+        let uri = format!("file://{}", temp.display());
+        let res = folder_from_args([OsString::from("elyterminal"), OsString::from(uri)]).unwrap();
+        assert_eq!(res, Some(temp));
+    }
+
+    #[test]
+    fn folder_nonexistent_fails() {
+        let bogus = std::env::temp_dir().join("ely_nonexistent_folder_xyz123");
+        let res = folder_from_args([
+            OsString::from("elyterminal"),
+            OsString::from(bogus.display().to_string()),
+        ]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn folder_empty_args_returns_none() {
+        let res = folder_from_args([OsString::from("elyterminal")]).unwrap();
+        assert_eq!(res, None);
+    }
 }

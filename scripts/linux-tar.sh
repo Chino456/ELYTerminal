@@ -27,11 +27,13 @@ cat > "$work/$name/$id.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=ELYTerminal
-Exec=elyterminal
+Exec=elyterminal %F
 Icon=$id
 Terminal=false
 Categories=System;TerminalEmulator;
 StartupWMClass=$id
+MimeType=inode/directory;
+X-TerminalArgDir=--working-directory
 EOF
 tar -C "$work" -czf "$out/$name.tar.gz" "$name"
 glibc=$(run sh -c "objdump -T $out/elyterminal | grep -o 'GLIBC_[0-9.]*' | sort -u -V | tail -n 1")
