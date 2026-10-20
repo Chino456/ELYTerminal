@@ -386,10 +386,14 @@ impl Render for TerminalView {
             .on_any_mouse_down(cx.listener(Self::mouse_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_scroll_wheel(cx.listener(Self::wheel))
-            .on_drop(cx.listener(|view, paths: &ExternalPaths, _, cx| view.drop_paths(paths, cx)))
-            .on_drop(cx.listener(|view, drag: &crate::files::TreeDrag, _, cx| {
-                view.drop_tree_drag(drag, cx)
+            .on_drop(cx.listener(|view, paths: &ExternalPaths, window, cx| {
+                view.drop_paths(paths, window, cx)
             }))
+            .on_drop(
+                cx.listener(|view, drag: &crate::files::TreeDrag, window, cx| {
+                    view.drop_tree_drag(drag, window, cx)
+                }),
+            )
             .size_full()
             .px(px(settings.padding_x))
             .py(px(settings.padding_y))
