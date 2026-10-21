@@ -75,3 +75,7 @@ all = { level = "warn", priority = -1 }
 [[test]]
 name = "fonts"
 harness = false
+
+[patch.crates-io]
+xim-ctext = { path = "crates/xim-ctext" }
+

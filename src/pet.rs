@@ -40,8 +40,8 @@ use crate::{settings::SettingsStore, workspace::Workspace};
 const WIDTH: f32 = 112.0;
 const HEAD: f32 = 107.4;
 const ROOM: f32 = 16.0;
-/// How often she checks her Wayland anchor against the main window.
-const CHECK: Duration = Duration::from_millis(500);
+/// How often she checks her edge against the main window on Linux.
+const CHECK: Duration = Duration::from_millis(100);
 
 /// The pane edge her bottom stands on: the top, or the bottom, inside the window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,10 +97,7 @@ pub fn follow(main: WindowHandle<Workspace>, cx: &mut App) {
     sync(cx);
     cx.observe_global::<SettingsStore>(sync).detach();
     // gpui hears a change of state alone as no change of bounds, and sends an unseen popup no frames.
-    if main
-        .update(cx, |_, window, _| wayland(window))
-        .is_ok_and(|wayland| wayland)
-    {
+    if cfg!(target_os = "linux") {
         cx.spawn(async move |cx| {
             while cx.update(|cx| reanchor(main, &shown, cx)).is_ok() {
                 cx.background_executor().timer(CHECK).await;
@@ -162,24 +159,26 @@ fn wayland_spot(window: &Window, at: f32) -> (Edge, Point<Pixels>) {
     (edge, point(px(left(pane.size.width, at)), y))
 }
 
-/// Opens her again over a Wayland `main` once its size or state moves the anchor her popup opened at, which never moves.
+/// Keeps her on the right edge as `main` moves, or reopens her popup on Wayland.
 fn reanchor(main: WindowHandle<Workspace>, shown: &Shown, cx: &mut App) -> anyhow::Result<()> {
-    let at = SettingsStore::get(cx).ely_left;
-    let spot = main.update(cx, |_, window, _| wayland_spot(window, at))?;
     let Some(pet) = *shown.borrow() else {
         return Ok(());
     };
+    if !main.update(cx, |_, window, _| wayland(window))? {
+        main.update(cx, |_, main, cx| {
+            pet.update(cx, |pet, _, _| pet.place(main))
+        })??;
+        return Ok(());
+    }
+    let at = SettingsStore::get(cx).ely_left;
+    let spot = main.update(cx, |_, window, _| wayland_spot(window, at))?;
     if pet
         .read(cx)
         .is_ok_and(|pet| (pet.edge, pet.anchor) == (spot.0, Some(spot.1)))
     {
         return Ok(());
     }
-    close(
-        pet,
-        "to stand where the window's size or state, or a drag, puts her",
-        cx,
-    );
+    close(pet, "where the window puts her", cx);
     *shown.borrow_mut() = open_pet(main, cx);
     Ok(())
 }

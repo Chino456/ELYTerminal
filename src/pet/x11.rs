@@ -1,5 +1,7 @@
 //! Ely's window on X11: gpui's popup, which no window manager places, put on an edge of the main window's pane and just above it.
 
+use std::cell::Cell;
+
 use anyhow::{Context as _, bail};
 use gpui::{Bounds, Pixels, Window, px};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -19,6 +21,7 @@ pub struct Glue {
     pet: u32,
     main: u32,
     workarea: Atom,
+    last: Cell<Option<(i32, i32, Edge)>>,
 }
 
 impl Glue {
@@ -35,6 +38,7 @@ impl Glue {
             pet,
             main,
             workarea,
+            last: Cell::new(None),
         };
         let (root, _) = glue.frame()?;
         let monitors = glue.monitors(root)?.len();
@@ -85,15 +89,21 @@ impl Glue {
             Edge::Top => pane.origin.y,
             Edge::Bottom => pane.bottom(),
         });
+        let x = across(pane.origin.x + px(left(pane.size.width, at)));
+        let y = bottom - ((HEAD + ROOM) * scale).round() as i32;
+        if self.last.get() == Some((x, y, edge)) {
+            return Ok(edge);
+        }
         let aux = ConfigureWindowAux::new()
-            .x(across(pane.origin.x + px(left(pane.size.width, at))))
-            .y(bottom - ((HEAD + ROOM) * scale).round() as i32)
+            .x(x)
+            .y(y)
             .sibling(frame)
             .stack_mode(StackMode::ABOVE);
         (self.connection)
             .configure_window(self.pet, &aux)?
             .check()
             .context("pet: the X server did not move her window")?;
+        self.last.set(Some((x, y, edge)));
         Ok(edge)
     }
 
@@ -276,6 +286,7 @@ mod tests {
             pet,
             main,
             workarea,
+            last: Cell::new(None),
         };
         let pane = Bounds::new(point(px(10.), px(10.)), size(px(380.), px(280.)));
         let roomy = glue.put(2.0, pane, 140.0).expect("she is placed");

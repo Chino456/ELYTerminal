@@ -12,7 +12,13 @@ use gpui::App;
 /// A Linux app with no display server fails at start instead of running headless.
 #[cfg(target_os = "linux")]
 fn application() -> gpui::Application {
-    gpui_platform::linux(gpui::WindowingModes::WAYLAND | gpui::WindowingModes::X11)
+    let modes =
+        if std::env::var_os("ELY_WAYLAND").is_none() && std::env::var_os("DISPLAY").is_some() {
+            gpui::WindowingModes::X11
+        } else {
+            gpui::WindowingModes::WAYLAND | gpui::WindowingModes::X11
+        };
+    gpui_platform::linux(modes)
 }
 
 #[cfg(not(target_os = "linux"))]
