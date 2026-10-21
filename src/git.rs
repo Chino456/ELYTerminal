@@ -424,8 +424,15 @@ pub fn discard(top: &Path, change: &Change, section: ChangeSection) -> anyhow::R
 /// The newest `count` commits from HEAD, which must have one.
 pub fn log(top: &Path, count: usize) -> anyhow::Result<Vec<Commit>> {
     let count = format!("-n{count}");
-    let format = "--format=%H%x00%P%x00%s%x00%an%x00%ar%x00%D";
-    let args = ["log", &count, "-z", "--no-show-signature", format];
+    let format = "--format=%H%x00%P%x00%s%x00%an%x00%ar (%ad)%x00%D";
+    let args = [
+        "log",
+        &count,
+        "-z",
+        "--no-show-signature",
+        "--date=format:%Y-%m-%d %H:%M:%S",
+        format,
+    ];
     let out = run(top, &args, &[])?;
     let out = String::from_utf8_lossy(&out);
     let fields: Vec<&str> = out.split_terminator('\0').collect();

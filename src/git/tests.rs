@@ -306,7 +306,11 @@ fn a_commit_takes_the_staged_files_and_heads_the_log() {
     assert!(first.parents.is_empty());
     assert!(newest.id.chars().all(|c| c.is_ascii_hexdigit()) && !newest.id.is_empty());
     assert_eq!(newest.author.as_ref(), "Ely");
-    assert!(newest.when.ends_with("ago"), "{}", newest.when);
+    assert!(
+        newest.when.contains("ago") && newest.when.ends_with(')'),
+        "{}",
+        newest.when
+    );
     assert_eq!(newest.refs, [SharedString::from("HEAD -> main")]);
     assert!(first.refs.is_empty());
     assert_eq!(log(&root, 1).expect("a log").len(), 1);

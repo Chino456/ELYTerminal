@@ -2,16 +2,17 @@ use std::path::Path;
 
 use ely_gpui_component::{
     feedback::Alert,
-    git::{ChangeSection, Changed, ChangesList, CommitInput, CommitList, DiffViewer},
+    git::{ChangeSection, Changed, ChangesList, Commit, CommitInput, CommitItem, DiffViewer},
     lists::GitStatus,
     overlays::{ConfirmDialog, Dialog},
     primitives::{Icon, IconName, Severity},
-    theme::{ActiveTheme, TextSize},
+    theme::{ActiveTheme, Elevation, IconSize, Radius, TextSize},
     typography::{Caption, Ellipsis},
 };
 use gpui::{
-    App, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
+    AnyView, App, AppContext, Context, Div, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder, rems, uniform_list,
 };
 
 use super::{GitPanel, State};
@@ -134,6 +135,86 @@ fn heading(text: &'static str, cx: &App) -> Div {
         .child(text)
 }
 
+struct CommitTooltip {
+    commit: Commit,
+}
+
+impl Render for CommitTooltip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let colors = &theme.colors;
+        let commit = &self.commit;
+        let short_id = &commit.id[..7.min(commit.id.len())];
+        let xs = |opacity, text| {
+            div()
+                .text_size(theme.text_size(TextSize::Xs))
+                .text_color(colors.tooltip_fg.opacity(opacity))
+                .child(text)
+        };
+        let mut tip = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(Icon::new(IconName::GitCommitHorizontal))
+                    .child(div().min_w_0().child(Ellipsis::new(commit.subject.clone()))),
+            )
+            .child(xs(0.75, format!("Commit {short_id}")))
+            .child(xs(0.85, format!("Author: {}", commit.author)))
+            .child(xs(0.85, format!("Date: {}", commit.when)));
+        if !commit.refs.is_empty() {
+            let refs_str = commit.refs.join(", ");
+            tip = tip.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .text_size(theme.text_size(TextSize::Xs))
+                    .text_color(colors.tooltip_fg.opacity(0.85))
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::Xs))
+                    .child(div().min_w_0().child(Ellipsis::new(refs_str))),
+            );
+        }
+        if !commit.parents.is_empty() {
+            let parents_str = commit
+                .parents
+                .iter()
+                .map(|p| &p[..7.min(p.len())])
+                .collect::<Vec<_>>()
+                .join(", ");
+            tip = tip.child(xs(0.65, format!("Parents: {parents_str}")));
+        }
+        div().pt(theme.cursor_offset()).child(
+            div()
+                .max_w(rems(32.0))
+                .px_2()
+                .py_1()
+                .rounded(theme.radius(Radius::Md))
+                .bg(colors.tooltip_bg)
+                .text_color(colors.tooltip_fg)
+                .text_size(theme.text_size(TextSize::Sm))
+                .shadow(theme.elevation(Elevation::Floating))
+                .child(tip),
+        )
+    }
+}
+
+/// The hover tooltip showing detailed information for a commit, as VSCode does.
+fn commit_tooltip(commit: &Commit) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let commit = commit.clone();
+    move |_, cx| {
+        cx.new(|_| CommitTooltip {
+            commit: commit.clone(),
+        })
+        .into()
+    }
+}
+
 impl GitPanel {
     /// The open diff over the window, below the title bar.
     fn diff_dialog(&self, cx: &Context<Self>) -> Option<Dialog> {
@@ -250,7 +331,27 @@ impl Render for GitPanel {
             })
             .on_commit(move |_, cx| commit.update(cx, |panel, cx| panel.commit(cx)));
         let recent = (!commits.is_empty()).then(|| {
-            let list = CommitList::new("git-commits", commits);
+            let list = uniform_list("git-commits", commits.len(), {
+                let commits = commits.clone();
+                move |range, _, _| {
+                    range
+                        .map(|ix| {
+                            let commit = &commits[ix];
+                            let tip = commit_tooltip(commit);
+                            let mut row_commit = commit.clone();
+                            if let Some((rel, _)) = row_commit.when.split_once(" (") {
+                                row_commit.when = rel.to_string().into();
+                            }
+                            div()
+                                .id(("git-commit-row", ix))
+                                .w_full()
+                                .tooltip(tip)
+                                .child(CommitItem::new(("git-commit", ix), row_commit))
+                        })
+                        .collect()
+                }
+            })
+            .size_full();
             div().flex_1().min_h_0().child(list)
         });
         root.child(branch)
@@ -369,5 +470,18 @@ mod tests {
         );
         let detached = (IconName::GitCommitHorizontal, "1a2b3c4".into());
         assert_eq!(head(&repo(None)), detached);
+    }
+
+    #[test]
+    fn commit_tooltip_builds_for_commit_with_refs_and_parents() {
+        let commit = Commit {
+            id: "1234567890abcdef1234567890abcdef12345678".into(),
+            parents: vec!["abcdef1234567890abcdef1234567890abcdef12".into()],
+            subject: "Fix issue with commit hover".into(),
+            author: "Developer".into(),
+            when: "2 hours ago (2026-10-21 20:30:15)".into(),
+            refs: vec!["HEAD -> main".into(), "origin/main".into()],
+        };
+        let _builder = commit_tooltip(&commit);
     }
 }
