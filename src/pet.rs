@@ -383,6 +383,8 @@ impl Pet {
                 let name = format!("{edge:?}").to_lowercase();
                 log::info!("pet: Ely moves to the pane's {name} edge");
                 self.edge = edge;
+                self.shown = Instant::now();
+                self.eased = None;
             }
             Ok(_) => {}
             Err(error) => log::error!("{error:#}"),
