@@ -8,9 +8,13 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use x11rb::{
     protocol::{
         randr::ConnectionExt as _,
-        xproto::{Atom, AtomEnum, ConfigureWindowAux, ConnectionExt as _, StackMode},
+        xproto::{
+            Atom, AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt as _,
+            PropMode, StackMode,
+        },
     },
     rust_connection::RustConnection,
+    wrapper::ConnectionExt as _,
 };
 
 use super::{Edge, HEAD, ROOM, edge, left, pane};
@@ -29,6 +33,69 @@ impl Glue {
         let (pet, main) = (native(pet)?, native(main)?);
         // gpui opens $DISPLAY too; a window's place belongs to whoever asks.
         let (connection, _) = x11rb::connect(None).context("pet: no X server")?;
+        connection.unmap_window(pet)?;
+        connection.change_window_attributes(
+            pet,
+            &ChangeWindowAttributesAux::new().override_redirect(0),
+        )?;
+        let transient = connection
+            .intern_atom(false, b"WM_TRANSIENT_FOR")?
+            .reply()?
+            .atom;
+        let window_type = connection
+            .intern_atom(false, b"_NET_WM_WINDOW_TYPE")?
+            .reply()?
+            .atom;
+        let utility = connection
+            .intern_atom(false, b"_NET_WM_WINDOW_TYPE_UTILITY")?
+            .reply()?
+            .atom;
+        let motif = connection
+            .intern_atom(false, b"_MOTIF_WM_HINTS")?
+            .reply()?
+            .atom;
+        let state = connection
+            .intern_atom(false, b"_NET_WM_STATE")?
+            .reply()?
+            .atom;
+        let skip_taskbar = connection
+            .intern_atom(false, b"_NET_WM_STATE_SKIP_TASKBAR")?
+            .reply()?
+            .atom;
+        let skip_pager = connection
+            .intern_atom(false, b"_NET_WM_STATE_SKIP_PAGER")?
+            .reply()?
+            .atom;
+        connection.change_property32(
+            PropMode::REPLACE,
+            pet,
+            transient,
+            AtomEnum::WINDOW,
+            &[main],
+        )?;
+        connection.change_property32(
+            PropMode::REPLACE,
+            pet,
+            window_type,
+            AtomEnum::ATOM,
+            &[utility],
+        )?;
+        connection.change_property32(
+            PropMode::REPLACE,
+            pet,
+            state,
+            AtomEnum::ATOM,
+            &[skip_taskbar, skip_pager],
+        )?;
+        connection.change_property32(PropMode::REPLACE, pet, motif, motif, &[2, 0, 0, 0, 0])?;
+        connection.change_property32(
+            PropMode::REPLACE,
+            pet,
+            AtomEnum::WM_HINTS,
+            AtomEnum::WM_HINTS,
+            &[1, 0, 0, 0, 0, 0, 0, 0, 0],
+        )?;
+        connection.map_window(pet)?;
         let workarea = (connection.intern_atom(false, b"_NET_WORKAREA"))?
             .reply()
             .context("pet: the work area's atom")?
@@ -133,6 +200,9 @@ impl Glue {
 
     /// Maps her window while the main one shows, and unmaps it while that hides.
     pub fn shown(&self, visible: bool) -> anyhow::Result<()> {
+        if !visible {
+            self.last.set(None);
+        }
         let cookie = if visible {
             self.connection.map_window(self.pet)?
         } else {

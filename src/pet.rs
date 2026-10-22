@@ -80,18 +80,16 @@ pub struct Pet {
 /// Shows Ely over `main` while the settings want her.
 pub fn follow(main: WindowHandle<Workspace>, cx: &mut App) {
     let shown: Shown = Rc::default();
-    let sync = {
-        let shown = shown.clone();
-        move |cx: &mut App| {
-            let open = *shown.borrow();
-            match (SettingsStore::get(cx).ely, open) {
-                (true, None) => *shown.borrow_mut() = open_pet(main, cx),
-                (false, Some(pet)) => {
-                    *shown.borrow_mut() = None;
-                    close(pet, "as the settings say", cx);
-                }
-                _ => {}
+    let (seen, shown) = (shown.clone(), shown);
+    let sync = move |cx: &mut App| {
+        let open = *seen.borrow();
+        match (SettingsStore::get(cx).ely, open) {
+            (true, None) => *seen.borrow_mut() = open_pet(main, cx),
+            (false, Some(pet)) => {
+                *seen.borrow_mut() = None;
+                close(pet, "as the settings say", cx);
             }
+            _ => {}
         }
     };
     sync(cx);
@@ -229,12 +227,7 @@ fn show(main: WindowHandle<Workspace>, cx: &mut App) -> anyhow::Result<WindowHan
     };
     let workspace = main.entity(cx)?;
     let feeling = |workspace: &Workspace, cx: &App| {
-        mood(
-            workspace
-                .sessions()
-                .iter()
-                .filter_map(|session| session.looks(cx)),
-        )
+        mood(workspace.sessions().iter().filter_map(|s| s.looks(cx)))
     };
     let start = feeling(workspace.read(cx), cx);
     let pet = cx.open_window(options, |_, cx| {
@@ -413,7 +406,6 @@ impl Pet {
         let main = self.main;
         let slid = main.update(cx, |_, main, _| {
             let room = (f32::from(pane(main).size.width) - WIDTH).max(0.0);
-            // Whole points, so the kept place carries no float noise.
             self.at = (at + x - from).round().clamp(0.0, room.floor());
             self.place(main);
         });
@@ -436,19 +428,17 @@ impl Pet {
 
     /// The pointer's x in points: on the screen where her glue moves her window, else in her window, which a drag leaves in place.
     fn pointer(&self, local: Pixels, scale: f32) -> anyhow::Result<f32> {
-        match &self.glue {
-            Some(glue) => glue.pointer(scale),
-            None => Ok(local.into()),
-        }
+        self.glue
+            .as_ref()
+            .map_or(Ok(local.into()), |glue| glue.pointer(scale))
     }
 
     #[cfg(target_os = "linux")]
     fn shown(&mut self, visible: bool, main: &Window) {
-        if let Some(glue) = &self.glue {
-            match glue.shown(visible) {
-                Ok(()) => log::debug!("pet: Ely shows {visible} with the main window"),
-                Err(error) => log::error!("{error:#}"),
-            }
+        if let Some(glue) = &self.glue
+            && let Err(error) = glue.shown(visible)
+        {
+            log::error!("{error:#}");
         }
         if visible {
             self.place(main);
