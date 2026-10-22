@@ -1,3 +1,5 @@
+use std::ops::RangeInclusive;
+
 use alacritty_terminal::{
     grid::{Dimensions, Scroll},
     index::{Column, Line, Point as Cell, Side},
@@ -11,7 +13,7 @@ use gpui::{
 
 use super::{
     keys,
-    links::link_at,
+    links::{link_at, link_range_at},
     mouse::{self, Button, Gesture, MouseMode, Report, Tracking},
     view::TerminalView,
 };
@@ -32,6 +34,8 @@ pub struct Pointer {
     click: Option<Cell>,
     /// Buttons whose press went to the program.
     pressed: Vec<Button>,
+    /// The cell range of the currently hovered link, if any.
+    pub active_link: Option<RangeInclusive<Cell>>,
     /// The cell of the last report; motion inside it sends nothing.
     last: Option<(usize, usize)>,
     /// Wheel travel short of a line.
@@ -54,7 +58,10 @@ impl TerminalView {
         let x = ((position.x - origin.x) / cell.width).max(0.);
         let y = ((position.y - origin.y) / cell.height).max(0.);
         let (columns, lines) = self.size;
-        let (column, row) = ((x as usize).min(columns - 1), (y as usize).min(lines - 1));
+        let (column, row) = (
+            (x as usize).min(columns.saturating_sub(1)),
+            (y as usize).min(lines.saturating_sub(1)),
+        );
         let side = if x as usize >= columns || x.fract() >= 0.5 {
             Side::Right
         } else {
@@ -204,6 +211,18 @@ impl TerminalView {
                 .find(|button| self.pointer.pressed.contains(button));
             self.report(held, Gesture::Motion, cell, &event.modifiers, tracking);
         }
+        let in_active = self
+            .pointer
+            .active_link
+            .as_ref()
+            .is_some_and(|range| range.contains(&point));
+        if !in_active {
+            let next_link = link_range_at(&self.pty.term.lock(), point);
+            if self.pointer.active_link != next_link {
+                self.pointer.active_link = next_link;
+                cx.notify();
+            }
+        }
     }
 
     pub(super) fn mouse_up(
@@ -234,6 +253,9 @@ impl TerminalView {
     pub fn let_go(&mut self, cx: &mut Context<Self>) {
         self.end_selection(cx);
         self.pointer.click = None;
+        if self.pointer.active_link.take().is_some() {
+            cx.notify();
+        }
         for held in self.pointer.pressed.clone() {
             log::debug!("terminal {}: hidden with {held:?} down", self.pty.pid);
             let cell = self
@@ -311,6 +333,7 @@ impl TerminalView {
             };
             self.pty.write(arrow.repeat(lines.unsigned_abs() as usize));
         } else {
+            self.pointer.active_link = None;
             self.pty.term.lock().scroll_display(Scroll::Delta(lines));
             cx.notify();
         }

@@ -349,7 +349,7 @@ impl Render for TerminalView {
         let lit = self.finder.as_ref().map_or_else(Vec::new, |finder| {
             finder.lit(&term, cx.theme().colors.warning)
         });
-        let shown = frame(&term, &ink, &lit);
+        let shown = frame(&term, &ink, &lit, self.pointer.active_link.as_ref());
         let blinks = term.cursor_style().blinking;
         let span = Span::of(&term);
         drop(term);

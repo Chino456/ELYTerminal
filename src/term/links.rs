@@ -1,3 +1,5 @@
+use std::ops::RangeInclusive;
+
 use alacritty_terminal::{
     index::{Boundary, Point},
     term::{Term, cell::Flags},
@@ -9,7 +11,7 @@ use super::prompts;
 /// The OSC 8 target at `point`, else a URL in its wrapped line; a prompt's own link is no target.
 pub fn link_at<T>(term: &Term<T>, mut point: Point) -> Option<String> {
     let grid = term.grid();
-    if grid[point].flags.contains(Flags::WIDE_CHAR_SPACER) {
+    if point.column.0 > 0 && grid[point].flags.contains(Flags::WIDE_CHAR_SPACER) {
         point.column -= 1;
     }
     if let Some(link) = grid[point]
@@ -21,6 +23,7 @@ pub fn link_at<T>(term: &Term<T>, mut point: Point) -> Option<String> {
     let end = term.line_search_right(point);
     let mut cell = term.line_search_left(point);
     let (mut text, mut at) = (String::new(), 0);
+    let mut prev = cell;
     loop {
         if cell == point {
             at = text.len();
@@ -30,10 +33,14 @@ pub fn link_at<T>(term: &Term<T>, mut point: Point) -> Option<String> {
             text.push(grid[cell].c);
             text.extend(grid[cell].zerowidth().into_iter().flatten());
         }
-        if cell == end {
+        if cell >= end {
             break;
         }
         cell = cell.add(term, Boundary::Grid, 1);
+        if cell == prev {
+            break;
+        }
+        prev = cell;
     }
     links(&text)
         .into_iter()
@@ -41,6 +48,87 @@ pub fn link_at<T>(term: &Term<T>, mut point: Point) -> Option<String> {
             Target::Url(url) if bytes.contains(&at) => Some(url.to_string()),
             _ => None,
         })
+}
+
+/// The cell range of the OSC 8 link or URL at `point`, if any.
+pub fn link_range_at<T>(term: &Term<T>, mut point: Point) -> Option<RangeInclusive<Point>> {
+    let grid = term.grid();
+    if point.column.0 > 0 && grid[point].flags.contains(Flags::WIDE_CHAR_SPACER) {
+        point.column -= 1;
+    }
+    let end = term.line_search_right(point);
+    let mut cell = term.line_search_left(point);
+    if let Some(link) = grid[point]
+        .hyperlink()
+        .filter(|link| link.uri() != prompts::LINK)
+    {
+        let (mut from, mut to, mut in_link) = (point, point, false);
+        let mut prev = cell;
+        loop {
+            if grid[cell].hyperlink().as_ref() == Some(&link) {
+                if !in_link {
+                    from = cell;
+                    in_link = true;
+                }
+                to = cell;
+            } else if in_link {
+                if cell > point {
+                    break;
+                }
+                in_link = false;
+            }
+            if cell >= end {
+                break;
+            }
+            cell = cell.add(term, Boundary::Grid, 1);
+            if cell == prev {
+                break;
+            }
+            prev = cell;
+        }
+        return (from <= to).then_some(from..=to);
+    }
+    if grid[point].c == ' ' {
+        return None;
+    }
+    let (mut text, mut at, mut map) = (String::new(), 0, Vec::new());
+    let mut prev = cell;
+    loop {
+        if cell == point {
+            at = text.len();
+        }
+        let spacer = Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER;
+        if !grid[cell].flags.intersects(spacer) {
+            map.push((text.len(), cell));
+            text.push(grid[cell].c);
+            text.extend(grid[cell].zerowidth().into_iter().flatten());
+        }
+        if cell >= end {
+            break;
+        }
+        cell = cell.add(term, Boundary::Grid, 1);
+        if cell == prev {
+            break;
+        }
+        prev = cell;
+    }
+    links(&text).into_iter().find_map(|(bytes, target)| {
+        if matches!(target, Target::Url(_)) && bytes.contains(&at) {
+            let from = map
+                .iter()
+                .rev()
+                .find(|(b, _)| *b <= bytes.start)
+                .map(|(_, p)| *p)?;
+            let to = map
+                .iter()
+                .rev()
+                .find(|(b, _)| *b < bytes.end)
+                .map(|(_, p)| *p)?;
+            (from <= to).then_some(from..=to)
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]
@@ -101,5 +189,40 @@ mod tests {
             Some("file://a/\u{4e2d}"),
             "a wide cell's spacer is its char"
         );
+    }
+
+    #[test]
+    fn link_range_at_finds_range_for_urls_and_osc8() {
+        let mut term = Term::new(Config::default(), &TermSize::new(40, 4), VoidListener);
+        let mut parser: Processor = Processor::new();
+        parser.advance(
+            &mut term,
+            b"see https://ely.dev here\r\nand \x1b]8;;https://a.b\x1b\\link\x1b]8;;\x1b\\ now",
+        );
+        assert_eq!(
+            link_range_at(&term, Point::new(Line(0), Column(8))),
+            Some(Point::new(Line(0), Column(4))..=Point::new(Line(0), Column(18)))
+        );
+        assert_eq!(
+            link_range_at(&term, Point::new(Line(1), Column(5))),
+            Some(Point::new(Line(1), Column(4))..=Point::new(Line(1), Column(7)))
+        );
+        assert_eq!(link_range_at(&term, Point::new(Line(0), Column(0))), None);
+    }
+
+    #[test]
+    fn test_every_column() {
+        let mut term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
+        let mut parser: Processor = Processor::new();
+        parser.advance(
+            &mut term,
+            b"PS C:\\Users> https://github.com/foo/bar\r\n\x1b]8;;https://test.com\x1b\\click here\x1b]8;;\x1b\\",
+        );
+        for line in 0..24 {
+            for col in 0..80 {
+                let p = Point::new(Line(line), Column(col));
+                let _ = link_range_at(&term, p);
+            }
+        }
     }
 }

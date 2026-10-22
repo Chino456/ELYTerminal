@@ -1,3 +1,5 @@
+use std::ops::RangeInclusive;
+
 use alacritty_terminal::{
     event::EventListener,
     grid::Dimensions,
@@ -83,8 +85,13 @@ impl Frame {
     }
 }
 
-/// The screen as it shows now, scrolled back or not; `lit` matches wear their washes.
-pub fn frame<T: EventListener>(term: &Term<T>, ink: &Ink, lit: &[(Match, Hsla)]) -> Frame {
+/// The screen as it shows now, scrolled back or not; `lit` matches wear their washes; a hovered link is underlined.
+pub fn frame<T: EventListener>(
+    term: &Term<T>,
+    ink: &Ink,
+    lit: &[(Match, Hsla)],
+    active_link: Option<&RangeInclusive<Point>>,
+) -> Frame {
     let content = term.renderable_content();
     let offset = content.display_offset as i32;
     let mut rows = vec![Row::default(); term.screen_lines()];
@@ -98,7 +105,8 @@ pub fn frame<T: EventListener>(term: &Term<T>, ink: &Ink, lit: &[(Match, Hsla)])
             let (line, column) = (point.line, point.column);
             contains(point)
                 || (cell.flags.contains(Flags::WIDE_CHAR) && contains(Point::new(line, column + 1)))
-                || (cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+                || (column.0 > 0
+                    && cell.flags.contains(Flags::WIDE_CHAR_SPACER)
                     && contains(Point::new(line, column - 1)))
         };
         if content
@@ -111,6 +119,12 @@ pub fn frame<T: EventListener>(term: &Term<T>, ink: &Ink, lit: &[(Match, Hsla)])
         } else if let Some((_, wash)) = lit.iter().find(|(hit, _)| covers(&|at| hit.contains(&at)))
         {
             look.bg = Some(*wash);
+        }
+        if active_link.is_some_and(|range| covers(&|at| range.contains(&at))) {
+            look.underline = Underline::Single;
+            if cell.underline_color().is_none() {
+                look.underline_color = look.fg;
+            }
         }
         let spacer = cell
             .flags
@@ -219,7 +233,7 @@ mod tests {
         let mut parser: Processor = Processor::new();
         parser.advance(&mut term, bytes);
         let ink = Ink::new(themes::find("dracula").expect("dracula"), term.colors());
-        (frame(&term, &ink, &[]), ink)
+        (frame(&term, &ink, &[], None), ink)
     }
 
     #[test]
@@ -325,7 +339,7 @@ mod tests {
         selection.update(Point::new(Line(0), Column(3)), Side::Left);
         term.selection = Some(selection);
         let ink = Ink::new(themes::find("dracula").expect("dracula"), term.colors());
-        let frame = frame(&term, &ink, &[]);
+        let frame = frame(&term, &ink, &[], None);
         let grounds: Vec<_> = frame.rows[0]
             .runs
             .iter()
@@ -356,7 +370,7 @@ mod tests {
                 .map(|(bytes, style)| (*bytes, style.bg))
                 .collect()
         };
-        let shown = frame(&term, &ink, &lit);
+        let shown = frame(&term, &ink, &lit, None);
         assert_eq!(
             &grounds(&shown)[..5],
             [
@@ -373,12 +387,36 @@ mod tests {
             .as_mut()
             .expect("a selection")
             .update(at(6), Side::Right);
-        let shown = frame(&term, &ink, &lit);
+        let shown = frame(&term, &ink, &lit, None);
         assert_eq!(
             grounds(&shown)[3],
             (1, Some(ink.selection)),
             "the selection wins"
         );
+    }
+
+    #[test]
+    fn links_are_underlined_only_on_hover() {
+        use alacritty_terminal::index::{Column, Line};
+        let mut term = Term::new(Config::default(), &TermSize::new(24, 3), VoidListener);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut term, b"go https://ely.dev now");
+        let ink = Ink::new(themes::find("dracula").expect("dracula"), term.colors());
+        let unhovered = frame(&term, &ink, &[], None);
+        assert!(
+            unhovered.rows[0]
+                .runs
+                .iter()
+                .all(|(_, s)| s.underline == Underline::None)
+        );
+        let range = Point::new(Line(0), Column(3))..=Point::new(Line(0), Column(17));
+        let hovered = frame(&term, &ink, &[], Some(&range));
+        let hovered_run = hovered.rows[0]
+            .runs
+            .iter()
+            .find(|(len, _)| *len == "https://ely.dev".len())
+            .expect("hovered run");
+        assert_eq!(hovered_run.1.underline, Underline::Single);
     }
 
     #[test]
